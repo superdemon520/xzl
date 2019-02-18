@@ -1,0 +1,147 @@
+buildscript {
+    ext {
+        springBootVersion = '1.5.8.RELEASE'
+        snippetsDir = file('build/generated-snippets')
+        springRestdocsVersion = '1.2.1.RELEASE'
+    }
+    repositories {
+        maven { url "http://maven.aliyun.com/nexus/content/groups/public" }
+        maven { url "http://maven.xzlcorp.com/content/repositories/snapshots/" }
+        maven { url "http://maven.xzlcorp.com/content/repositories/releases/" }
+    }
+    dependencies {
+        classpath "gradle.plugin.com.arenagod.gradle:mybatis-generator-plugin:1.3"
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+        classpath "org.asciidoctor:asciidoctor-gradle-plugin:1.5.3"
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'org.asciidoctor.convert'
+apply plugin: "com.arenagod.gradle.MybatisGenerator"
+
+
+repositories {
+    maven { url "http://maven.aliyun.com/nexus/content/groups/public" }
+    maven { url "http://maven.xzlcorp.com/content/repositories/snapshots/" }
+    maven { url "http://maven.xzlcorp.com/content/repositories/releases/" }
+}
+
+allprojects {
+    apply plugin: 'java'
+//    apply plugin: 'checkstyle'
+    gradle.projectsEvaluated {
+        tasks.withType(JavaCompile) {
+            options.encoding = 'UTF-8'
+            options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Werror"
+        }
+    }
+
+    dependencies {
+        compile(
+                'org.projectlombok:lombok:1.16.20',
+                'io.springfox:springfox-swagger2:2.6.1',
+                'io.springfox:springfox-swagger-ui:2.6.1'
+        )
+    }
+
+//    checkstyle {
+//        toolVersion = "8.0"
+//    }
+}
+
+dependencies {
+    compile(
+            project(':api'),
+            'org.springframework.boot:spring-boot-starter-web',
+            "org.springframework.boot:spring-boot-starter-integration",
+
+            "org.springframework.integration:spring-integration-stream",
+            "org.springframework.integration:spring-integration-mqtt",
+
+            'org.springframework.cloud:spring-cloud-config-client',
+            'org.springframework.cloud:spring-cloud-starter-hystrix',
+            'org.springframework.cloud:spring-cloud-starter-eureka',
+            'org.springframework.cloud:spring-cloud-starter-feign',
+
+            'com.getsentry.raven:raven-logback:8.0.3',
+            'com.netflix.feign:feign-httpclient:8.18.0',
+            'org.springframework.boot:spring-boot-starter-data-redis',
+            'org.mybatis:mybatis:3.4.1',
+            'org.mybatis:mybatis-typehandlers-jsr310:1.0.2',
+            'org.mybatis.spring.boot:mybatis-spring-boot-starter:1.1.1',
+
+            'com.netflix.feign:feign-httpclient:8.18.0',
+
+
+            "cn.xinzhili:x-utils-mybatis:${xutilsVersion}",
+            "cn.xinzhili:x-utils-core:${xutilsVersion}",
+            "cn.xinzhili:mas-service-api:20180205-SNAPSHOT",
+            "cn.xinzhili:dpc-service-api:20180510-SNAPSHOT",
+            "cn.xinzhili:user-service-api:20180531-SNAPSHOT"
+    )
+    runtime(
+            'org.postgresql:postgresql:9.4.1208',
+
+            'org.springframework.boot:spring-boot-starter-actuator',
+
+//            'org.springframework.cloud:spring-cloud-starter-sleuth',
+//            'org.springframework.cloud:spring-cloud-sleuth-zipkin',
+            'com.getsentry.raven:raven-logback:7.8.0',
+            'com.zaxxer:HikariCP:2.4.6',
+            'org.flywaydb:flyway-core:4.2.0',
+            'org.jolokia:jolokia-core:1.3.7'
+    )
+    testCompile(
+            'org.springframework.boot:spring-boot-starter-test',
+            "org.springframework.restdocs:spring-restdocs-core:${springRestdocsVersion}",
+            "org.springframework.restdocs:spring-restdocs-mockmvc:${springRestdocsVersion}"
+    )
+    mybatisGenerator(
+            'org.mybatis.generator:mybatis-generator-core:1.3.3',
+            "cn.xinzhili:x-utils-mybatis:${xutilsVersion}",
+            'org.postgresql:postgresql:9.4.1208'
+    )
+}
+
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.cloud:spring-cloud-dependencies:Dalston.SR4'
+    }
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '4.2.1'
+    distributionUrl = 'http://get.jenv.mvnsearch.org/download/gradle/gradle-4.2.1.zip'
+}
+
+test {
+    outputs.dir snippetsDir
+}
+configurations {
+    mybatisGenerator
+}
+
+mybatisGenerator {
+    verbose = true
+    configFile = 'generatorConfig.xml'
+}
+
+asciidoctor {
+    attributes 'snippets': snippetsDir
+    inputs.dir snippetsDir
+    dependsOn test
+    backends = ['html5']
+}
+
+jar {
+    dependsOn asciidoctor
+    from("${asciidoctor.outputDir}/html5") {
+        into 'static/docs'
+    }
+}
+
+springBoot {
+    buildInfo()
+}

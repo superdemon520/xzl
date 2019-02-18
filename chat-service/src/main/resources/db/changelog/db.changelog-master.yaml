@@ -1,0 +1,11 @@
+databaseChangeLog:
+  - changeSet:
+      id: quartz_tables_postgres
+      author: kw
+      dbms: postgresql
+      changes:
+      - sqlFile:
+          encoding: utf8
+          path: db/changelog/sql/tables_postgres.sql
+          splitStatements: true
+          stripComments: true

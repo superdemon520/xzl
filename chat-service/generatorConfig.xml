@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE generatorConfiguration
+  PUBLIC "-//mybatis.org//DTD MyBatis Generator Configuration 1.0//EN"
+  "http://mybatis.org/dtd/mybatis-generator-config_1_0.dtd">
+<generatorConfiguration>
+
+  <context id="chat-service" targetRuntime="MyBatis3">
+    <property name="jdbcType" value="true" />
+    <plugin type="cn.xinzhili.xutils.mybatis.generator.DeletePlugin" />
+    <plugin type="cn.xinzhili.xutils.mybatis.generator.PgReturningIdInsertPlugin" />
+    <plugin type="cn.xinzhili.xutils.mybatis.generator.PgPaginationPlugin" />
+    <plugin type="org.mybatis.generator.plugins.ToStringPlugin" />
+
+    <jdbcConnection driverClass="org.postgresql.Driver"
+      connectionURL="jdbc:postgresql://172.16.10.105:5432/dev" userId="postgres"
+      password="dev"></jdbcConnection>
+
+    <javaTypeResolver type="cn.xinzhili.xutils.mybatis.generator.DateTypeResolver">
+      <property name="useJSR310" value="true" />
+    </javaTypeResolver>
+
+    <javaModelGenerator targetPackage="cn.xinzhili.chat.model" targetProject="./src/main/java">
+      <property name="trimStrings" value="true" />
+    </javaModelGenerator>
+
+    <sqlMapGenerator targetPackage="mappers.auto" targetProject="./src/main/resources">
+      <!--<property name="enableSubPackages" value="true" />-->
+    </sqlMapGenerator>
+
+    <javaClientGenerator type="MIXEDMAPPER" targetPackage="cn.xinzhili.chat.dao"
+      targetProject="./src/main/java">
+      <!--<property name="enableSubPackages" value="true" />-->
+    </javaClientGenerator>
+
+    <!--<table schema="s_message" tableName="t_message" domainObjectName="Message">-->
+    <!--<generatedKey column="id" sqlStatement="JDBC" identity="true"/>-->
+    <!--<columnOverride column="sender_role_type"-->
+    <!--javaType="cn.xinzhili.chat.api.RoleType"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler"/>-->
+    <!--<columnOverride column="message_type"-->
+    <!--javaType="cn.xinzhili.chat.api.MessageType"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler"/>-->
+    <!--</table>-->
+
+    <!--<table schema="s_message" tableName="t_session" domainObjectName="Session">-->
+    <!--<generatedKey column="id" sqlStatement="JDBC" identity="true"/>-->
+    <!--<columnOverride column="initiator_role_type"-->
+    <!--javaType="cn.xinzhili.chat.api.RoleType"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler"/>-->
+    <!--<columnOverride column="type"-->
+    <!--javaType="cn.xinzhili.chat.api.Type"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler"/>-->
+    <!--<columnOverride column="session_type"-->
+    <!--javaType="cn.xinzhili.chat.api.SessionType"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler"/>-->
+    <!--</table>-->
+
+    <!--<table schema="s_message" tableName="t_message_session" domainObjectName="MessageSession">-->
+    <!--<generatedKey column="id" sqlStatement="JDBC" identity="true" />-->
+    <!--<columnOverride column="user_status" javaType="cn.xinzhili.chat.api.UserStatus"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler" />-->
+    <!--<columnOverride column="role_type" javaType="cn.xinzhili.chat.api.RoleType"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler" />-->
+    <!--<columnOverride column="unread_status" javaType="cn.xinzhili.chat.api.UnreadStatus"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler" />-->
+    <!--</table>-->
+    <!--<table schema="s_message" tableName="t_group_member_detail"-->
+    <!--domainObjectName="GroupMemberDetail">-->
+    <!--<generatedKey column="id" sqlStatement="JDBC" identity="true" />-->
+    <!--<columnOverride column="sender_role_type" javaType="cn.xinzhili.chat.api.RoleType"-->
+    <!--typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler" />-->
+    <!--</table>-->
+    <table schema="s_message" tableName="t_member_status" domainObjectName="MemberStatus">
+      <generatedKey column="id" sqlStatement="JDBC" identity="true" />
+      <columnOverride column="assistant_status" javaType="cn.xinzhili.chat.api.UserStatus"
+        typeHandler="cn.xinzhili.xutils.mybatis.typehandlers.EnumCodeHandler" />
+    </table>
+
+  </context>
+</generatorConfiguration>

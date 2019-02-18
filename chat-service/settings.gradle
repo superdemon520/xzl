@@ -1,0 +1,3 @@
+rootProject.name='chat-service'
+include 'api'
+
