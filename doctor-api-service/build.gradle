@@ -1,0 +1,122 @@
+buildscript {
+    repositories {
+        maven { url "http://maven.xzlcorp.com/content/repositories/snapshots/" }
+        maven { url "http://maven.xzlcorp.com/content/repositories/releases/" }
+        maven { url "http://maven.aliyun.com/nexus/content/groups/public/" }
+    }
+    dependencies {
+        classpath(
+                "org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}",
+                'org.asciidoctor:asciidoctor-gradle-plugin:1.5.3'
+        )
+    }
+}
+
+
+group = "cn.xinzhili"
+version = "20170822"
+
+apply plugin: 'idea'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'org.asciidoctor.convert'
+
+
+repositories {
+    maven { url "http://maven.xzlcorp.com/content/repositories/snapshots/" }
+    maven { url "http://maven.xzlcorp.com/content/repositories/releases/" }
+    maven { url "http://maven.aliyun.com/nexus/content/repositories/jcenter/" }
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
+}
+
+dependencies {
+    compile(
+            "javax.xml.bind:jaxb-api:2.1",//for java 9
+            "com.sun.xml.bind:jaxb-impl:2.3.0",//for java 9
+            "com.sun.xml.bind:jaxb-core:2.3.0",//for java 9
+
+            "cn.xinzhili:x-utils-auth:${xutilsVersion}",
+            "cn.xinzhili:x-utils-core:${xutilsVersion}",
+            "cn.xinzhili:x-utils-spring:${xutilsVersion}",
+            'cn.xinzhili:chat-service-api:20180521-SNAPSHOT',
+            'cn.xinzhili:dpc-service-api:20180510-SNAPSHOT',
+            'cn.xinzhili:user-service-api:20180530-SNAPSHOT',
+            'cn.xinzhili:mas-service-api:20171229-1-SNAPSHOT',
+            'cn.xinzhili:medical-service-api:20180524-SNAPSHOT',
+            'cn.xinzhili:medicine-service-api:20180226-SNAPSHOT',
+            'org.springframework.cloud:spring-cloud-starter-hystrix',
+            'org.springframework.cloud:spring-cloud-starter-security',
+            'org.springframework.cloud:spring-cloud-starter-feign',
+            'com.google.guava:guava:21.0',
+            'org.apache.poi:poi-ooxml:3.16'
+    )
+    runtime(
+            'org.springframework.boot:spring-boot-starter-web',
+            'org.springframework.cloud:spring-cloud-starter-eureka',
+            'org.springframework.boot:spring-boot-starter-actuator',
+            'org.springframework.cloud:spring-cloud-config-client',
+            'org.springframework.cloud:spring-cloud-starter-oauth2',
+//            'org.springframework.cloud:spring-cloud-starter-sleuth',
+//            'org.springframework.cloud:spring-cloud-sleuth-zipkin',
+            'org.springframework.cloud:spring-cloud-config-client',
+            'org.springframework.security:spring-security-jwt',
+            'com.getsentry.raven:raven-logback:7.8.0',
+            'com.netflix.feign:feign-httpclient:8.18.0'
+    )
+
+    testCompile(
+            'org.springframework.boot:spring-boot-starter-test',
+            'com.jayway.jsonpath:json-path',
+            'org.springframework.restdocs:spring-restdocs-core:1.1.2.RELEASE',
+            'org.springframework.restdocs:spring-restdocs-mockmvc:1.1.2.RELEASE'
+    )
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '4.7'
+    distributionUrl = 'http://get.jenv.mvnsearch.org/download/gradle/gradle-4.7.zip'
+}
+
+ext {
+    snippetsDir = file('build/generated-snippets')
+}
+
+test {
+    outputs.dir snippetsDir
+}
+
+asciidoctor {
+    attributes 'snippets': snippetsDir
+    inputs.dir snippetsDir
+    dependsOn test
+}
+
+jar {
+    dependsOn asciidoctor
+    from("${asciidoctor.outputDir}/html5") {
+        into 'static/docs'
+    }
+}
+
+springBoot {
+    buildInfo()
+}
+
+allprojects {
+    apply plugin: 'java'
+
+    dependencies {
+        compile 'org.projectlombok:lombok:1.16.20'
+    }
+
+    gradle.projectsEvaluated {
+        tasks.withType(JavaCompile) {
+            options.encoding = 'UTF-8'
+            options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Werror"
+        }
+    }
+}

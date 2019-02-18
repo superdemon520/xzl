@@ -1,0 +1,22 @@
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/base.xml"/>
+    <jmxConfigurator/>
+    <springProfile name="prod">
+        <springProperty scope="context" name="sentryDsn" source="sentry.dsn"
+                        defaultValue="https://ba43d72f17a34ef38483f589470206d4:2bc2bb325f0f466391d9928a9d2d7c57@sentry.xinzhili.cn/5?options"/>
+        <springProperty scope="context" name="sentryTags" source="sentry.tags"
+                        defaultValue="tag1:user-service"/>
+        <springProperty scope="context" name="sentryFilterLevel" source="sentry.filter.level"
+                        defaultValue="ERROR"/>
+        <appender name="SENTRY" class="com.getsentry.raven.logback.SentryAppender">
+            <dsn>${sentryDsn}</dsn>
+            <tags>${sentryTags}</tags>
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>${sentryFilterLevel}</level>
+            </filter>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="SENTRY"/>
+        </root>
+    </springProfile>
+</configuration>

@@ -1,0 +1,3491 @@
+= 医生端API文档
+xinzhili.cn, Last Updated at {docdatetime}
+:icons: font
+:source-highlighter: coderay
+:sectnumlevels: 2
+:sectlinks:
+:toc: left
+:toclevels: 2
+
+:toc!:
+医生端web和后台服务交互的API文档
+
+[[errcode]]
+== 错误码
+TODO 待更新
+
+[cols="h,5a"]
+|===
+| 错误码| 错误描述
+
+| 400
+| 请求参数错误
+
+| 450
+| 业务处理失败
+
+| 500
+| 服务异常
+
+| 550
+| 服务暂不可用
+
+| 2001
+| 没找到用户
+
+| 2002
+| 该手机号已被注册
+
+| 2003
+| 医生存在绑定患者，不能被删除
+
+| 2004
+| 不合法的绑定关系
+
+| 2005
+| 当前用户无权发送采集表
+
+| 2006
+| 重置用户密码失败
+
+| 2007
+| 新密码必须和原密码不同
+
+| 2008
+| 密码错误
+
+| 2009
+| 密码格式错误
+
+| 2010
+| 用户状态异常
+
+| 2011
+| 更新用户信息失败
+
+| 2101
+| 没有找到医院
+
+| 2102
+| 无法添加部门
+
+| 2103
+| 科室名称已经存在
+
+| 18001
+| 发送短信过于频繁
+
+| 18002
+| 验证码不正确
+
+| 18003
+| 发送验证码失败
+
+| 2015
+| 当前医助没有关联的患者
+
+| 2211
+| 获取药品关联禁忌症失败
+
+| 2300
+| 医生不能修改医嘱
+
+|===
+
+[[auth]]
+== 登录与授权
+当前采用OAuth2的机制处理用户请求，Token的实现方式采用JWT标准。当前所有医生端client在申请token时需要采用client_id为
+`doctor_app` 的Basic Auth验证机制，Client credentials为空。即所有申请token的请求
+都需要带一个 `Authorization` 的header，值为 `Basic ['doctor_web:'的base64编码]`。具体的请求种类见下文。
+
+=== POST /api/v0/oauth/token
+申请Access Token与Refresh Token。
+
+医生客户端提供登录用户名和密码，调用此接口。成功后返回 `access_token` 和 `refresh_token`。
+在用户登录成功后续的http请求中，需要带上 `access_token`。如果token过期，则服务器端会提示
+客户端token已过期，如：
+
+[source,json]
+----
+{
+  "error": "invalid_token",
+  "error_description": "Access token expired: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE0NzAxMDczNDAsInVzZXJfbmFtZSI6IjE4NjAwMDAwMDAxIiwiYXV0aG9yaXRpZXMiOlsiUEFUSUVOVF9SRUFEIiwiUEFUSUVOVF9XUklURSJdLCJqdGkiOiJmYzYyMmNiOC1jZjg2LTQ3MzItYTkwMi0yOWVkZGZhMzI0OTciLCJjbGllbnRfaWQiOiJwYXRpZW50X2FwcCIsInNjb3BlIjpbIlBBVElFTlQiXX0.JF-v3uPCy1aZz2H0hmWnJey6Ws813aG4iGkaxQhShncCMU06hg90t0W8UoxPLag5aXs32Aj-QvkZj7kURxKizq_NxtyPoWuuF0bct_w_erz_XOGSJHkwhr_Kucmkw6Kw7knI_czv4jnolLXdytvXpMNX-uCZtDA-bhx_0sOtUI9kbMvjB7258jrizbN_IzcN8tcyWhwza7-311QnaDBfR2pwsjZv8esTNy37zp7Kh_1f9XJQTMVBIQRUDEaxCGYUv68ZCt7DIcmCSZcjGJshx3OcpF8DiOSYI9nBrBq6CZ-uZEXvMuTZrDiiwvZo6nYg8qrERm8OF6Ypvamq1qIEYA"
+}
+----
+
+此时客户端带上之前保存的 `refresh_token` 请求更换新 `access_token`。
+如果成功客户端则得到一个新的 `access_token`。如果由于 `refresh_token` 也失效或者其他原因
+更新不成功，则客户端应该跳转到登录界面，提示用户重新输入用户名密码，客户端再次调用此接口申请
+`access_token` 即可。
+
+客户端在用户退出登录时清空本地保存的 `access_token` 和 `refresh_token` 并需要调取
+`/oauth/revoke` 接口。
+
+注意整个过程任何时刻客户端都不应保存任何形式的用户密码，而应该保存 `access_token` 和
+`refresh_token`。目前默认设置 `access_token` 过期为12个小时，`refresh_token` 过期为
+30天(开发环境分别为5分钟／1小时)。
+
+以下部分分别就申请新token和更新token作详细说明。
+
+==== Request Header
+|===
+|Key|Value|Note
+
+|`Authorization`
+|`Basic ZG9jdG9yX3dlYjo=`
+|Basic 后面的值为 `doctor_web` 这个client_id与空密码 `''` 通过 `:` 拼接后得到 `doctor_web:`
+再经过base64编码后的结果。客户端调用此接口必须具备此client_id用来区分患者端和医生端。
+
+|===
+
+==== Request Body
+可以通过form-urlencoded 或 form data 的方式提供。
+请求格式分为申请新的token和刷新过期token两种类型。
+
+===== 申请Access Token
+
+|===
+|Parameter|Value|Description|Note
+
+|`grant_type`
+|必须为 `password`
+|授权的类型
+|required
+
+|`username`
+|用户手机号
+|
+|required
+
+|`password`
+|用户密码
+|
+|required
+
+|`device_type`
+|设备类型，`ios` 或 `android`
+|
+|optional
+
+|`device_token`
+|设备ID
+|
+|optional
+
+|===
+
+* Example Request
+
+[source,bash]
+----
+$ curl -X POST -H "Authorization: Basic ZG9jdG9yX3dlYjo=" -d 'grant_type=password&username=18600000001&password=testpw' "http://172.31.2.37:9004/api/v0/oauth/token"
+----
+
+===== 刷新过期Access Token
+
+|===
+|Parameter|Value|Description|Note
+
+|`grant_type`
+|必须为 `refresh_token`
+|授权的类型
+|required
+
+|`refresh_token`
+|客户端保存的refresh_token
+|
+|required
+
+|===
+
+* Example Request
+
+[source,bash]
+----
+$ curl -X POST -H "Authorization: Basic ZG9jdG9yX3dlYjo=" -d 'grant_type=refresh_token&refresh_token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX25hbWUiOiIxODYwMDAwMDAwMSIsInNjb3BlIjpbIlBBVElFTlQiXSwiYXRpIjoiZmM2MjJjYjgtY2Y4Ni00NzMyLWE5MDItMjllZGRmYTMyNDk3IiwiZXhwIjoxNDcyNjU2MTQwLCJhdXRob3JpdGllcyI6WyJQQVRJRU5UX1JFQUQiLCJQQVRJRU5UX1dSSVRFIl0sImp0aSI6IjYwOTRhZTdjLTNiMDItNGIyMy04NTJmLTQyODY3YjYxN2QyYSIsImNsaWVudF9pZCI6InBhdGllbnRfYXBwIn0.HCHXQYGVocXfIkWERXFOC_IaPgh30WGV8u3l0byeP2xCsMz2ZZKpk1jKR8lM4c7niGSANJ7hjPka2uqKMFW7IKbdR9Fp0aBw4sr9MHlxKqs-l4FRGmmwmAGTd4TU2gsGpYweageDqfn3YaVLtiAk0cFWCt7MvJ2rktQ4_S88iAarpfxi6IJJm4EUMHYwK3Xj2tBw2ugO_wGr42DHwS0ZWHq5WzvvGkir1UIWRWgajGkoFsR6x0ljA2kwmL3bG9aeICUExxHUVlYiqW-BGrvQvAxklCFBOPqjJ_LUfkQn7d10SOg7Hw5oHGmpzBEd6maeHhL332miXTgdprmCE_A_Xg' "http://172.31.2.37:9004/api/v0/oauth/token"
+----
+
+==== Response Body
+===== 请求成功
+|===
+|Path|Type|Description
+
+|`access_token`
+|`String`
+|Access Token
+
+|`token_type`
+|`String`
+|token的类型。目前只有 `bearer`
+
+|`refresh_token`
+|`String`
+|Refresh Token
+
+|`expires_in`
+|`Number`
+|此token的有效期秒数
+
+|`scope`
+|`String`
+|此token的作用范围
+
+|`jti`
+|`String`
+|此token的唯一标识，用来撤销回收token
+
+|===
+
+* Example Response
+
+[source,json]
+----
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE0NzAyNTMzNjIsInVzZXJfbmFtZSI6IjE4NjAwMDAwMDAxIiwiYXV0aG9yaXRpZXMiOlsiUEFUSUVOVF9SRUFEIiwiUEFUSUVOVF9XUklURSJdLCJqdGkiOiIyMjYyMjYyMi1jYzVmLTQxZWUtOWQ5OC0wNGUwZjU0NWVhNzUiLCJjbGllbnRfaWQiOiJwYXRpZW50X2FwcCIsInNjb3BlIjpbIlBBVElFTlQiXX0.fzr2ztcArKtq5OKuviRT4PV-zI-9-GzqQn7xPTJuMOGaBKlQJ9wYVsEyNKxIuNHMn9yMSmzrAD3x9UkGPj8-q8gvnfH6KKBzsLbyeofUVplCDWAXLcl8DVmNfQeoS9fjhY7mCoK3GW7KFQ52oJImchpjVv3pJ_KetEhijrE41RvyPd2KuBtrfRX8sz_XsGczHRmYQDD2qD4Kek0QoLSNCJV7dQtYq1P8MltFSlszEbmXEG9piLVGVkzoEUy8yoPrQbSVj9DAg3Uf5_jIwpNDYPLqKpuWjr3pnbIw0VNwzX44JgV-7OI2tqelDDBNU8NlgizMxZduH10wq3h-ONtEMA",
+  "token_type": "bearer",
+  "refresh_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX25hbWUiOiIxODYwMDAwMDAwMSIsInNjb3BlIjpbIlBBVElFTlQiXSwiYXRpIjoiMjI2MjI2MjItY2M1Zi00MWVlLTlkOTgtMDRlMGY1NDVlYTc1IiwiZXhwIjoxNDcyODAyMTYyLCJhdXRob3JpdGllcyI6WyJQQVRJRU5UX1JFQUQiLCJQQVRJRU5UX1dSSVRFIl0sImp0aSI6IjBmYjk4M2ExLWU1YmMtNDFhNS04MGM2LTI1MTY3MDY4MDk2ZCIsImNsaWVudF9pZCI6InBhdGllbnRfYXBwIn0.ZyMXh6kBAJsvqzCEn2a82PfFFPu4t4WzV9uULpqVU56LLYmnPSpUMXSbc_1kgW_fzKf6ssJTmStq6o5eqw1UD9iESFavWMUXfaCUTojfwGQjNr9QKKX9WsdBBmhCuxn-9aZghbkcBjqUCE114bSuILii72P7S3djolxMvp_5EelNwQ5zCNJlTZPEBy_AjqWOtvXr1r0CLVzJsuBjdzpYE9NcYPy0dJpbDUr9d-G0vHsWOgUMvYKPT_NwZmxhvTKbj_FEXey2wYCVP5_mZp2uWywwtLaxlQizRQYVP1zVHQo0vkwPqlzj1pHggm53egrcY-BJbM15l003MsyfjalHuw",
+  "expires_in": 43199,
+  "scope": "DOCTOR",
+  "jti": "22622622-cc5f-41ee-9d98-04e0f545ea75"
+}
+----
+
+===== 请求失败
+|===
+|Path|Type|Description
+
+|`error`
+|`String`
+|错误名称
+
+|`error_description`
+|`String`
+|错误描述
+
+|===
+
+* Example Response
+
+[source,json]
+----
+{
+  "error": "invalid_grant",
+  "error_description": "Bad credentials"
+}
+----
+
+=== POST /api/v0/oauth/revoke
+
+撤销Refresh Token及其相关联的Access Token，用于退出用户登录。服务器可能会根据登录的客户端
+类型解除设备的绑定关联。
+
+调用时请求需以Bearer Header的方式携带已保存的 `refresh_token` ，类似于API请求携带 `access_token`。
+
+成功后返回success；如果该token已过期或不存在，也会返回成功success。
+
+注意客户端在退出后应该清理本地保存的 `access_token` 和 `refresh_token`。
+
+
+==== Request Header
+|===
+|Key|Value|Note
+
+|`Authorization`
+|`Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI1WjdnN3IiLCJ1c2VyX25hbWUiOiIxNTkwMTU0ODUyMSIsInNjb3BlIjpbIlBBVElFTlQiXSwiYXRpIjoiN2RjZjhhZDQtYjJjNi00MTk3LTliNjEtMWM2MTg2NWFkN2QxIiwiZXhwIjoxNDg2NTQ3MzE3LCJhdXRob3JpdGllcyI6WyJQQVRJRU5UX1JFQUQiLCJQQVRJRU5UX1dSSVRFIl0sImp0aSI6IjVmNDA4MzBlLWU0ZDItNGNlMC1iM2ZkLTcyZWE4ZDVjN2YyMSIsImNsaWVudF9pZCI6InBhdGllbnRfYXBwIn0.AKnB0XcQlNbA0COB0bLtgFIeJVVB-ssC_MBZ96ZjjYLxT_sBKWQX5PxR6IcfY_q_O3YlFMHEac1BfWSfDKYksAtq0Uj3IndULrpqJtWDmRNDlyQSG-P5ryOh8UvVGN4EFyukbP2_99pMzkaSu_1S0zijwqvFdadWWPV4VOTa2vvcGQfFLC_ZpgS9bdhcLd1JOva9ihbvZMfoCczr82Q_pzbpPV7sC507gijLsVn3XF2VNqZi3kWWNRWVz4I68FabiN7fKv-jbqcI2ZGrFCk8WTotXiP3UuoakJC1kGGo3o6gega0qCgl1z-IvJHiJG4oLl5GMvT7TSit-F7vkSIsMQ`
+|Bearer 后面的值为客户端保存的 `refresh_token`
+
+|===
+
+* Example Request
+
+[source,bash]
+----
+$ curl -X POST -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI1WjdnN3IiLCJ1c2VyX25hbWUiOiIxNTkwMTU0ODUyMSIsInNjb3BlIjpbIlBBVElFTlQiXSwiYXRpIjoiN2RjZjhhZDQtYjJjNi00MTk3LTliNjEtMWM2MTg2NWFkN2QxIiwiZXhwIjoxNDg2NTQ3MzE3LCJhdXRob3JpdGllcyI6WyJQQVRJRU5UX1JFQUQiLCJQQVRJRU5UX1dSSVRFIl0sImp0aSI6IjVmNDA4MzBlLWU0ZDItNGNlMC1iM2ZkLTcyZWE4ZDVjN2YyMSIsImNsaWVudF9pZCI6InBhdGllbnRfYXBwIn0.AKnB0XcQlNbA0COB0bLtgFIeJVVB-ssC_MBZ96ZjjYLxT_sBKWQX5PxR6IcfY_q_O3YlFMHEac1BfWSfDKYksAtq0Uj3IndULrpqJtWDmRNDlyQSG-P5ryOh8UvVGN4EFyukbP2_99pMzkaSu_1S0zijwqvFdadWWPV4VOTa2vvcGQfFLC_ZpgS9bdhcLd1JOva9ihbvZMfoCczr82Q_pzbpPV7sC507gijLsVn3XF2VNqZi3kWWNRWVz4I68FabiN7fKv-jbqcI2ZGrFCk8WTotXiP3UuoakJC1kGGo3o6gega0qCgl1z-IvJHiJG4oLl5GMvT7TSit-F7vkSIsMQ" "http://172.31.2.37:9004/oauth/revoke"
+----
+
+==== Response Body
+|===
+|Path|Type|Description
+
+|`status`
+|`String`
+|请求结果
+
+|`data`
+|`Object`
+|目前为 `null`
+
+|===
+
+* Example Response
+
+[source,json]
+----
+{
+  "status": "success",
+  "data": null
+}
+----
+
+[[user]]
+== 用户
+
+=== GET /api/v0/doctor/user: 获取用户详细信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_user_details/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_user_details/curl-request.adoc[]
+
+==== Request parameters
+include::{snippets}/get_user_details/request-parameters.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_user_details/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_user_details/response-fields.adoc[]
+
+=== POST /api/v0/doctor/user/password: 未登录用户忘记密码时的重置密码
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/password
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/reset_pwd/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/reset_pwd/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/reset_pwd/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/reset_pwd/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/reset_pwd/response-fields.adoc[]
+
+=== PATCH /api/v0/doctor/user/password: 已登录用户修改密码
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/password
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_pwd/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_pwd/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/update_pwd/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_pwd/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_pwd/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/user/init: 首次登录时完善个人信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/init
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/init_staff/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/init_staff/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/init_staff/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/init_staff/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/init_staff/response-fields.adoc[]
+
+
+
+=== POST /api/v0/admin/review/user: 管理员审核医生/医生助理
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/admin/review/user
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/admin_review_user/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/admin_review_user/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/admin_review_user/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/admin_review_user/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/admin_review_user/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/user/verification: 医生忘记密码发送验证码
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/verification
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/send_v_code/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/send_v_code/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/send_v_code/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/send_v_code/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/send_v_code/response-fields.adoc[]
+
+
+[[patient-doctor]]
+== 医患
+
+=== /api/v0/doctor/message: 获取用户聊天消息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/message
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_doctor_messages/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_doctor_messages/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_doctor_messages/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_doctor_messages/response-fields.adoc[]
+
+
+=== /api/v0/doctor/chat: 发送用户聊天消息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/chat
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_doctor_messages/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_doctor_messages/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_doctor_messages/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_doctor_messages/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_doctor_messages/response-fields.adoc[]
+
+=== POST /api/v0/doctor/inquiry: 发送用户生活情况采集表
+
+医助或者无医助的医生对患者下发生活方式采集量表。
+
+* 如果是医助发，则是对所有该医助所关联的患者发。
+* 如果是医生发，则是对所有该医生所关联的患者发。发之前会先验证是否该医生所在的
+科室里面没有医助
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/inquiry
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/send_inquiry/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/send_inquiry/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/send_inquiry/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/send_inquiry/response-fields.adoc[]
+
+[[institution]]
+== 机构管理
+
+=== GET /api/v0/doctor/institution/{id} : 获取医院详细信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/institution/{id}
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_institution_detail/http-request.adoc[]
+|===
+
+==== Path param
+include::{snippets}/get_institution_detail/path-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_institution_detail/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_institution_detail/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_institution_detail/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/institution : 获取医院信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/institution
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_hospital/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_hospital/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_hospital/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_hospital/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_hospital/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/institution/{id}/department : 增加医院科室
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/institution/{id}/department
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/get_hospital_detail/http-request.adoc[]
+|===
+
+==== Path param
+include::{snippets}/add_hospital_department/path-parameters.adoc[]
+
+==== Request Body
+include::{snippets}/add_hospital_department/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_hospital_detail/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_hospital_department/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_hospital_department/response-fields.adoc[]
+
+=== PATCH /api/v0/doctor/institution/department/{id} : 科室重命名
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/institution/department/{id}
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/rename_hospital_department/http-request.adoc[]
+|===
+
+==== Path param
+include::{snippets}/rename_hospital_department/path-parameters.adoc[]
+
+==== Request Body
+include::{snippets}/rename_hospital_department/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/rename_hospital_department/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/rename_hospital_department/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/rename_hospital_department/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/operator/institution : 查询运营所属所有机构信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/operator/institution
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_operator_institution/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_operator_institution/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_operator_institution/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_operator_institution/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/user/doctor : 增加医生
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/doctor
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_doctor/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_doctor/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_doctor/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/doctor : 查询医生列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/doctor
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_doctor_list/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_doctor_list/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_doctor_list/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_doctor_list/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_doctor_list/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/user/assistant : 增加医生助理
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/assistant
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_assistant/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_assistant/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_assistant/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_assistant/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_assistant/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/user/assistant : 查询医生助理列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/assistant
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_assistant_list/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_assistant_list/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_assistant_list/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_assistant_list/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_assistant_list/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/operator : 查询运营列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/operator
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_operator_list/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_operator_list/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_operator_list/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_operator_list/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_operator_list/response-fields.adoc[]
+
+
+
+=== DELETE /api/v0/doctor/user/doctor  批量删除医生
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/doctor
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_doctor/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/delete_doctor/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_doctor/response-fields.adoc[]
+
+
+=== DELETE /api/v0/doctor/user/assistant  批量删除医生助理
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/assistant
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_assistant/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/delete_assistant/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_assistant/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_assistant/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_assistant/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/doctor  更新医生
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/doctor
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_doctor/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_doctor/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_doctor/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/assistant  更新医生助理
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/assistant
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_assistant/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_assistant/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_assistant/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_assistant/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_assistant/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/user/operator : 增加运营
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/operator
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_operator/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_operator/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_operator/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_operator/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_operator/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/operator  更新运营
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/operator
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_operator/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_operator/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_operator/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_operator/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_operator/response-fields.adoc[]
+
+
+
+=== DELETE /api/v0/doctor/user/operator  批量删除运营
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/operator
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_operator/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/delete_operator/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_operator/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_operator/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_operator/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/avatar : 获取头像上传信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/avatar
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/avatar_upload_info/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/avatar_upload_info/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/avatar_upload_info/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/avatar_upload_info/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/avatar_upload_info/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/certificate  更新证书
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/certificate
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_user_certificate/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_user_certificate/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_user_certificate/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_user_certificate/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_user_certificate/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/certificate : 获取证书上传信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/certificate
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/certificate_upload_info/http-request.adoc[]
+|===
+
+
+==== cURL 命令
+include::{snippets}/certificate_upload_info/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/certificate_upload_info/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/certificate_upload_info/response-fields.adoc[]
+
+
+=== DELETE /api/v0/doctor/institution/department/{id}: 删除机构
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/institution/department/{id}
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_department/http-request.adoc[]
+|===
+
+==== Path Param
+include::{snippets}/delete_department/path-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_department/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_department/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_department/response-fields.adoc[]
+
+=== POST /api/v0/doctor/user/department: 重新分配人员至新的科室
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/department
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/move_staff_department/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/move_staff_department/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/move_staff_department/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/move_staff_department/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/move_staff_department/response-fields.adoc[]
+
+=== POST /api/v0/doctor/user/password/{id}: 管理员重置用户密码
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/user/password/{id}
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/admin_reset_pwd/http-request.adoc[]
+|===
+
+==== Path Param
+include::{snippets}/admin_reset_pwd/path-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/admin_reset_pwd/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/admin_reset_pwd/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/admin_reset_pwd/response-fields.adoc[]
+
+[[patient]]
+== 患者
+
+=== GET /api/v0/doctor/user/patient: 患者列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_patient_list/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_patient_list/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_patient_list/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_patient_list/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_patient_list/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/patient/visual/count: 首页统计数接口
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/visual/count
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/patient_visual_count/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/patient_visual_count/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/patient_visual_count/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/patient_visual_count/response-fields.adoc[]
+
+=== GET /api/v0/doctor/user/patient/{patientId}: 通过id获取患者信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/{patientId}
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_patient_detail/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_patient_detail/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_patient_detail/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_patient_detail/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/user/patient : 增加患者
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_patient/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_patient/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_patient/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_patient/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_patient/response-fields.adoc[]
+
+
+=== DELETE /api/v0/doctor/user/patient  批量删除患者
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_patients/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/delete_patients/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_patients/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_patients/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_patients/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/patient  更新患者
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_patient/http-request.adoc[]
+|===
+
+**管理员权限和运维权限修改的信息不一样，管理员能修改患者的姓名 性别 医生医助绑定关系和会员等级**
+
+**剩下的信息都是运维人员可以修改的**
+
+==== Request Body
+include::{snippets}/update_patient/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_patient/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_patient/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_patient/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/patient/remark/{patientId}  更新患者备注信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/remark/{patientId}
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_patient_remark/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_patient_remark/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_patient_remark/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_patient_remark/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/user/patient/binding  批量更新患者的绑定关系
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/binding
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_patient_binding/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_patient_binding/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_patient_binding/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_patient_binding/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_patient_binding/response-fields.adoc[]
+
+
+
+
+
+=== DELETE /api/v0/doctor/user/patient/binding/assistant  删除患者医助的绑定关系
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/binding/assistant
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_patient_binding_assistant/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/delete_patient_binding_assistant/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_patient_binding_assistant/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_patient_binding_assistant/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_patient_binding_assistant/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/plan: 获取患者最近服药计划
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/plan
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_plan/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_plan/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_plan/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_plan/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_plan/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/plan/timeline: 获取患者的时间轴
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/plan/timeline
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_patient_record_timeline/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_patient_record_timeline/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_patient_record_timeline/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_patient_record_timeline/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_patient_record_timeline/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/record: 获取患者服药历史
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/record
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_record/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_record/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_record/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_record/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_record/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/image/latest: 患者所有类型最新已审核图片列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/image/latest
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_latest_image/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_latest_image/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_latest_image/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_latest_image/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_latest_image/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/image/detail: 患者图片列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/image/detail
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_image_list/http-request.adoc[]
+|===
+==== Request parameters
+include::{snippets}/get_image_list/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_image_list/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_image_list/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_image_list/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/medicalrecord : 添加/更新大病历
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/medicalrecord
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/handle_medical_record/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/handle_medical_record/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/handle_medical_record/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/handle_medical_record/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/handle_medical_record/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/medicalrecord:  查询大病历数据
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/medicalrecord
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_medical_record/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_medical_record/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_medical_record/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_medical_record/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_medical_record/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/diagnosis : 添加诊断
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/diagnosis
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_diagnosis/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_diagnosis/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_diagnosis/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_diagnosis/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_diagnosis/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/diagnosis  更新诊断
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/diagnosis
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_diagnosis/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_diagnosis/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_diagnosis/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_diagnosis/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_diagnosis/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/diagnosis:  通过图片id或者患者id 查询诊断
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/diagnosis
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_diagnosis/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_diagnosis/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_diagnosis/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_diagnosis/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_diagnosis/response-fields.adoc[]
+
+=== DELETE /api/v0/doctor/diagnosis/{id}: 根据id删除诊断
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/diagnosis/{id}
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/delete_diagnosis/http-request.adoc[]
+|===
+
+==== Path Param
+include::{snippets}/delete_diagnosis/path-parameters.adoc[]
+==== cURL 命令
+include::{snippets}/delete_diagnosis/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_diagnosis/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_diagnosis/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/disease: 通过关键字查询包括该关键字的疾病列表
+＊ 最多只返回30条纪录
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/disease
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_disease/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_disease/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_disease/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_disease/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_disease/response-fields.adoc[]
+
+
+=== POST /api/v0/doctor/image/review : 添加或者更新图片的审核信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/image/review
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/image_review/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/image_review/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/image_review/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/image_review/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/image_review/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/image/type:  获取图片的所有类型
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/image/type
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_image_type/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_image_type/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_image_type/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_image_type/response-fields.adoc[]
+
+
+
+=== DELETE /api/v0/doctor/image/type:  删除图片的某些类型
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/image/type
+
+| Method
+| DELETE
+
+| Request
+| include::{snippets}/delete_image_type/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/delete_image_type/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/delete_image_type/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/delete_image_type/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/delete_image_type/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/inspection:  查询患者的生化信息
+
+*目前只有患者血压数据 03/28
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/inspection
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_inspection/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_inspection/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_inspection/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_inspection/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_inspection/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/inspection/item:  根据图片类型查询该类型下所有的生化项目
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/inspection/item
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_inspection_item/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_inspection_item/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_inspection_item/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_inspection_item/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_inspection_item/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/inspection/cardiogram:  患者最新心脏超声数据
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/inspection/cardiogram
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_inspection_cardiogram/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_inspection_cardiogram/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_inspection_cardiogram/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_inspection_cardiogram/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_inspection_cardiogram/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/inspection : 处理生化数据 include add && update
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/inspection
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_inspection/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_inspection/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_inspection/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_inspection/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_inspection/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/inspection/detail:  通过图片id 查询该图片所关联的生化数据
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/inspection/detail
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_inspection_detail/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_inspection_detail/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_inspection_detail/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_inspection_detail/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_inspection_detail/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/advice : 发送医嘱
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/advice
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/send_doctor_advice/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/send_doctor_advice/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/send_doctor_advice/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/send_doctor_advice/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/send_doctor_advice/response-fields.adoc[]
+
+=== GET /api/v0/doctor/advice: 获取医嘱列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/advice
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/doctor_advices/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/doctor_advices/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/doctor_advices/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/doctor_advices/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/advice/confirmed: 获取已确认医嘱列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/advice
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/doctor_advice_confirmed/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/doctor_advice_confirmed/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/doctor_advice_confirmed/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/doctor_advice_confirmed/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/doctor_advice_confirmed/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/advice/unconfirmed: 获取未确认医嘱列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/advice
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/doctor_advice_unconfirmed/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/doctor_advice_unconfirmed/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/doctor_advice_unconfirmed/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/doctor_advice_unconfirmed/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/doctor_advice_unconfirmed/response-fields.adoc[]
+
+=== PATCH /api/v0/doctor/advice/{id}: 更新医嘱信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/advice/{id}
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_doctor_advice/http-request.adoc[]
+|===
+
+==== Path Param
+include::{snippets}/update_doctor_advice/path-parameters.adoc[]
+
+==== Request Body
+include::{snippets}/update_doctor_advice/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_doctor_advice/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_doctor_advice/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_doctor_advice/response-fields.adoc[]
+
+=== GET /api/v0/doctor/user/patient/region : 获取患者的省市县
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/region
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_patient_region/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/get_patient_region/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_patient_region/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_patient_region/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_patient_region/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/life/status/{patientId} : 获取患者生活状况
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/life/status/{patientId}
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_life_status/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/get_life_status/path-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_life_status/curl-request.adoc[]
+
+==== 成功 Response
+ 参考 http://172.31.2.38:9001/docs/index.html#_嵌入式网页api
+include::{snippets}/get_life_status/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_life_status/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/symptom : 录入患者症状
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/symptom
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/handle_symptom/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/handle_symptom/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/handle_symptom/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/handle_symptom/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/handle_symptom/response-fields.adoc[]
+
+
+
+
+=== GET /api/v0/doctor/basic/symptom : 获取症状列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/basic/symptom
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_basic_symptom/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/get_basic_symptom/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_basic_symptom/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_basic_symptom/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_basic_symptom/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/symptom/history : 查询患者的历史症状信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/symptom/history
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_symptom_history/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/get_symptom_history/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_symptom_history/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_symptom_history/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_symptom_history/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/symptom : 查询患者的当前症状信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/symptom
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_symptom/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/get_symptom/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_symptom/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_symptom/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_symptom/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/admin/staff/upload : 医生或医助批量上传
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/admin/staff/upload
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/handle_staff_file_upload/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/handle_staff_file_upload/request-parts.adoc[]
+include::{snippets}/handle_staff_file_upload/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/handle_staff_file_upload/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/handle_staff_file_upload/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/handle_staff_file_upload/response-fields.adoc[]
+
+=== POST /api/v0/doctor/admin/patient/upload : 患者批量上传
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/admin/patient/upload
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/handle_patient_file_upload/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/handle_patient_file_upload/request-parts.adoc[]
+include::{snippets}/handle_patient_file_upload/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/handle_patient_file_upload/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/handle_patient_file_upload/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/handle_patient_file_upload/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/user/patient/region : 查询医生所有患者所在省份信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/user/patient/region
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/user_patient_region/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/user_patient_region/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/user_patient_region/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/user_patient_region/response-fields.adoc[]
+
+=== GET /api/v0/doctor/medicine/{name} : 根据关键字查药品名
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/medicine/{name}
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_medicine_by_key/http-request.adoc[]
+|===
+
+==== Request Parameters
+include::{snippets}/get_medicine_by_key/path-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_medicine_by_key/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_medicine_by_key/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_medicine_by_key/response-fields.adoc[]
+
+=== GET /api/v0/doctor/patient/{patientId}/symptom/survey 获取患者症状调查表
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/patient/{patientId}/symptom/survey
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_symptom_survey/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_symptom_survey/curl-request.adoc[]
+
+
+==== 成功 Response
+include::{snippets}/get_symptom_survey/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_symptom_survey/response-fields.adoc[]
+
+
+
+
+=== GET /api/v0/doctor/taboo 获取药品禁忌症提醒
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/taboo
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_taboo/http-request.adoc[]
+|===
+
+==== 请求参数
+include::{snippets}/get_taboo/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_taboo/curl-request.adoc[]
+
+
+==== 成功 Response
+include::{snippets}/get_taboo/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_taboo/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/medicine/manual/{medicineId} 获取药品说明书
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/medicine/manual/{medicineId}
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_manual_by_medicine_ids/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_manual_by_medicine_ids/curl-request.adoc[]
+
+
+==== 成功 Response
+include::{snippets}/get_manual_by_medicine_ids/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_manual_by_medicine_ids/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/basic/hospital 根据医院名称模糊查询医院信息
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/basic/hospital
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_basic_hospital/http-request.adoc[]
+|===
+==== 请求参数
+include::{snippets}/get_basic_hospital/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_basic_hospital/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_basic_hospital/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_basic_hospital/response-fields.adoc[]
+
+
+
+
+=== GET /basic/treatment 根据处理方式名称模糊查询处理方式信息
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /basic/treatment
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_basic_treatment/http-request.adoc[]
+|===
+==== 请求参数
+include::{snippets}/get_basic_treatment/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_basic_treatment/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_basic_treatment/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_basic_treatment/response-fields.adoc[]
+
+
+
+=== GET /basic/stent 根据支架名称模糊查询支架信息
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /basic/stent
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_basic_stent/http-request.adoc[]
+|===
+==== 请求参数
+include::{snippets}/get_basic_treatment/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_basic_stent/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_basic_stent/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_basic_stent/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/basic/hospital/{id} 根据id查询医院详情
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+|
+ /basic/hospital/{id}
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_hospital_detail/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_hospital_detail/curl-request.adoc[]
+
+
+==== 成功 Response
+include::{snippets}/get_hospital_detail/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_hospital_detail/response-fields.adoc[]
+
+
+=== PATCH  /api/v0/doctor/group/chat/{patientId} : 医助提交消息记录
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/group/chat/{patientId}
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/commit_chat_to_doctor/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/commit_chat_to_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/commit_chat_to_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/commit_chat_to_doctor/response-fields.adoc[]
+
+
+=== PATCH  /api/v0/doctor/read/chat : 将消息列表变为已读
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/read/chat
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/doctor_read_chat/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/handle_patient_file_upload/request-parts.adoc[]
+
+==== cURL 命令
+include::{snippets}/doctor_read_chat/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/doctor_read_chat/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/doctor_read_chat/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/consultation/patients: 获取该医生的会诊患者列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/consultation/patients
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_consultation_patients/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_consultation_patients/curl-request.adoc[]
+
+==== Request parameters
+include::{snippets}/get_consultation_patients/request-parameters.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_consultation_patients/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_consultation_patients/response-fields.adoc[]
+
+
+
+=== GET /api/v0/doctor/consultation: 获取该医生的患者的会诊详情列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/consultation
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_consultations/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/get_consultations/curl-request.adoc[]
+
+==== Request parameters
+include::{snippets}/get_consultations/request-parameters.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_consultations/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_consultations/response-fields.adoc[]
+
+
+
+=== POST /api/v0/doctor/consultation: 发送会诊信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/consultation
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/add_consultation/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/add_consultation/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/add_consultation/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_consultation/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_consultation/response-fields.adoc[]
+
+
+=== PATCH /api/v0/doctor/consultation: 医生回答别人的会诊信息
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/doctor/consultation
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_consultation/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_consultation/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/update_consultation/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_consultation/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_consultation/response-fields.adoc[]
+
+
+=== GET /api/v0/doctor/consultation/doctor : 查询会诊医生列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /api/v0/doctor/consultation/doctor
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_consultation_doctor_list/http-request.adoc[]
+|===
+
+==== Request parameters
+include::{snippets}/get_consultation_doctor_list/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_consultation_doctor_list/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_consultation_doctor_list/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_consultation_doctor_list/response-fields.adoc[]
+
+=== GET /statistics/department/patients 统计各个机构下部门人数
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+/statistics/department/patients
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_statistics_patients/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_statistics_patients/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_statistics_patients/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_statistics_patients/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_statistics_patients/response-fields.adoc[]
+
+
+
+
+
+=== GET /statistics/department/images 统计各个机构下部门下人员有效图片数量
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/statistics/department/images
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_statistics_images/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_statistics_images/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_statistics_images/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_statistics_images/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_statistics_images/response-fields.adoc[]
+
+
+=== GET /api/v0/notification/operator 运营人员提醒消息列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/notification/operator
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_operator_notification/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_operator_notification/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_operator_notification/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_operator_notification/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_operator_notification/response-fields.adoc[]
+
+
+=== PATCH /api/v0/notification/operator: 运营更新消息提醒状态
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/notification/operator
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_operator_notification/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_operator_notification/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/update_operator_notification/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_operator_notification/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_operator_notification/response-fields.adoc[]
+
+
+
+=== PATCH /api/v0/notification/operator/read: 运营提醒消息标记为已读
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /api/v0/notification/operator/read
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_operator_notification_read_time/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_operator_notification_read_time/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_operator_notification_read_time/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_operator_notification_read_time/response-fields.adoc[]
+
+
+=== GET /statistics/department/standard/rate 统计各个机构下部门下人员血糖血压尿酸血脂的达标率
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/statistics/department/standard/rate
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_statistics_standard_rate/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_statistics_standard_rate/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_statistics_standard_rate/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_statistics_standard_rate/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_statistics_standard_rate/response-fields.adoc[]
+
+
+=== GET /statistics/department/workload 各个机构部门下消息提醒数量统计
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/statistics/department/workload
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_statistics_workload/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_statistics_workload/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_statistics_workload/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_statistics_workload/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_statistics_workload/response-fields.adoc[]
+
+=== GET /inspection/chart: 根据时间查询达标值线形图
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /inspection/chart
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/inspection_chart/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/inspection_chart/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/inspection_chart/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/inspection_chart/response-fields.adoc[]
+
+== 即时消息接口
+
+=== GET /chat/session 获取会话列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/chat/session
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_chat_session/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_chat_session/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_chat_session/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_chat_session/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_chat_session/response-fields.adoc[]
+
+
+
+=== POST /chat/session/message 发送消息内容
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/chat/session/message
+
+| Method
+| POST
+
+| Request
+| include::{snippets}/send_message/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/send_message/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/send_message/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/send_message/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/send_message/response-fields.adoc[]
+
+
+=== GET /chat/session/message 获取消息列表
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/chat/session/message
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_chat_session_message/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_chat_session_message/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_chat_session_message/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_chat_session_message/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_chat_session_message/response-fields.adoc[]
+
+
+=== PATCH /chat/session/count/change: 修改显示红点或真实消息数量
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /chat/session/count/change
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_count_show/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_count_show/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/update_count_show/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_count_show/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_count_show/response-fields.adoc[]
+
+
+
+=== GET /chat/session/unread 获取消息未读数
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+/chat/session/unread
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_chat_unread_count/http-request.adoc[]
+|===
+
+==== Request Param
+include::{snippets}/get_chat_unread_count/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_chat_unread_count/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_chat_unread_count/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_chat_unread_count/response-fields.adoc[]
+
+
+=== PATCH /chat/session/clean: 点击群组清零消息数
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /chat/session/clean
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/clean_unread_count/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/clean_unread_count/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/clean_unread_count/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/clean_unread_count/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/clean_unread_count/response-fields.adoc[]
+
+
+=== PATCH /chat/session/assistant/status: 修改医助禁言状态
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+| /chat/session/assistant/status
+
+| Method
+| PATCH
+
+| Request
+| include::{snippets}/update_assistant_stauts/http-request.adoc[]
+|===
+
+==== cURL 命令
+include::{snippets}/update_assistant_stauts/curl-request.adoc[]
+
+==== Request Body
+include::{snippets}/update_assistant_stauts/request-fields.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_assistant_stauts/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_assistant_stauts/response-fields.adoc[]
+
+=== POST /future/doctor: 添加未来医生
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /future/doctor
+
+| Method
+| POST
+
+| Request
+
+| include::{snippets}/add_future_doctor/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/add_future_doctor/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/add_future_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/add_future_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/add_future_doctor/response-fields.adoc[]
+
+
+=== PATCH /future/doctor: 更新未来医生
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /future/doctor
+
+| Method
+| PATCH
+
+| Request
+
+| include::{snippets}/update_future_doctor/http-request.adoc[]
+|===
+
+==== Request Body
+include::{snippets}/update_future_doctor/request-fields.adoc[]
+
+==== cURL 命令
+include::{snippets}/update_future_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/update_future_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/update_future_doctor/response-fields.adoc[]
+
+=== GET /future/doctor 查询未来医生
+
+
+==== Request
+
+[cols="h,5a"]
+|===
+| URL
+
+| /future/doctor
+
+| Method
+| GET
+
+| Request
+| include::{snippets}/get_future_doctor/http-request.adoc[]
+|===
+
+==== Request  Param
+include::{snippets}/get_future_doctor/request-parameters.adoc[]
+
+==== cURL 命令
+include::{snippets}/get_future_doctor/curl-request.adoc[]
+
+==== 成功 Response
+include::{snippets}/get_future_doctor/http-response.adoc[]
+
+==== 成功 Response Body
+include::{snippets}/get_future_doctor/response-fields.adoc[]

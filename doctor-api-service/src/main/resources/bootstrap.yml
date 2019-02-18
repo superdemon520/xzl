@@ -1,0 +1,15 @@
+spring:
+  cloud:
+    config:
+      name: doctor-api
+      profile: local
+      label: master
+      uri: http://172.31.2.214:8888/config
+---
+
+spring:
+  profiles: prod
+  cloud:
+    config:
+      profile: prod
+      uri: http://10.0.1.252:8888/config
